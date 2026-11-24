@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EuroLeague Fantasy PIR Predictor</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #f97316;
+      --accent-soft: rgba(249, 115, 22, 0.15);
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px 16px;
+      line-height: 1.5;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    h1 { font-size: 1.6rem; font-weight: 700; }
+
+    .badge {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      background: var(--card);
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    input, select {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    input[type="text"] { flex: 1; min-width: 200px; }
+
+    .blend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .blend input[type="range"] { width: 140px; padding: 0; accent-color: var(--accent); }
+    .blend strong { color: var(--text); min-width: 2.6em; display: inline-block; text-align: right; }
+
+    .table-wrap {
+      background: var(--card);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.92rem;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.6);
+      color: var(--muted);
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    th:hover { color: var(--text); }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255, 255, 255, 0.03); }
+
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .team-tag {
+      display: inline-block;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+
+    .proj { font-weight: 700; color: var(--green); }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .zero { color: var(--muted); }
+
+    .opp-hint { color: var(--muted); font-size: 0.78rem; margin-left: 6px; }
+
+    .model-info {
+      margin-top: 14px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>EuroLeague Fantasy — PIR Predictor</h1>
+      <span class="badge" id="roundBadge">Loading...</span>
+    </header>
+
+    <div class="controls">
+      <input type="text" id="searchInput" placeholder="Search player..." />
+      <select id="teamFilter">
+        <option value="ALL">All teams</option>
+      </select>
+      <select id="minGamesFilter">
+        <option value="3">Min 3 games played</option>
+        <option value="1">All players (min 1 game)</option>
+        <option value="5">Min 5 games played</option>
+      </select>
+      <label class="blend" title="0% = čist model (jače vuče ka sredini lige). 100% = samo prosjek sezone.">
+        Povjerenje u prosjek sezone
+        <input type="range" id="blendSlider" min="0" max="100" step="5" value="30" />
+        <strong id="blendVal">30%</strong>
+      </label>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="name">Name</th>
+            <th data-key="team">Team</th>
+            <th data-key="season" class="num">Season Avg PIR</th>
+            <th data-key="last3" class="num">Last 3 Avg PIR</th>
+            <th data-key="oppF" class="num" title="Koliko PIR-a protivnik u prosjeku dozvoljava iznad lige. Plus = lakši protivnik.">Opp. Strength</th>
+            <th data-key="proj" class="num">Next Round Projected PIR ▼</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="model-info" id="modelInfo"></div>
+  </div>
+
+  <script>
+    // ---------- Linearna regresija (ridge) ----------
+    function fitLinearRegression(X, y, lambda = 1e-3) {
+      const n = X.length;
+      const p = X[0].length + 1;
+      const Xb = X.map(row => [1, ...row]);
+
+      const XtX = Array.from({ length: p }, () => Array(p).fill(0));
+      const Xty = Array(p).fill(0);
+
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < p; j++) {
+          Xty[j] += Xb[i][j] * y[i];
+          for (let k = 0; k < p; k++) {
+            XtX[j][k] += Xb[i][j] * Xb[i][k];
+          }
+        }
+      }
+
+      for (let j = 1; j < p; j++) XtX[j][j] += lambda;
+
+      const weights = solveLinearSystem(XtX, Xty);
+      return {
+        weights,
+        predict: (features) => {
+          let pred = weights[0];
+          for (let j = 0; j < features.length; j++) {
+            pred += weights[j + 1] * features[j];
+          }
+          return pred;
+        }
+      };
+    }
+
+    function solveLinearSystem(A, b) {
+      const n = b.length;
+      const M = A.map((row, i) => [...row, b[i]]);
+
+      for (let col = 0; col < n; col++) {
+        let pivot = col;
+        for (let row = col + 1; row < n; row++) {
+          if (Math.abs(M[row][col]) > Math.abs(M[pivot][col])) pivot = row;
+        }
+        [M[col], M[pivot]] = [M[pivot], M[col]];
+
+        const div = M[col][col] || 1e-12;
+        for (let j = col; j <= n; j++) M[col][j] /= div;
+
+        for (let row = 0; row < n; row++) {
+          if (row !== col) {
+            const factor = M[row][col];
+            for (let j = col; j <= n; j++) M[row][j] -= factor * M[col][j];
+          }
+        }
+      }
+      return M.map(row => row[n]);
+    }
+
+    // ---------- Jačina protivnika ----------
+    // Za svaki tim i kolo: koliko je PIR-a dozvolio protivničkim igračima
+    // (samo utakmice PRIJE tog kola, da ne curi informacija u trening).
+    const SHRINK_K = 60; // "pseudo-utakmice" ka prosjeku lige, smiruje rane šumove
+
+    function buildOppModel(players) {
+      const teamRounds = {};   // tim -> kolo -> {sum, n}
+      const leagueRounds = {}; // kolo -> {sum, n}
+      let totalSum = 0, totalN = 0;
+
+      for (const p of players) {
+        for (const g of p.games) {
+          if (!g.opp || g.round == null) continue;
+          const tr = (teamRounds[g.opp] ??= {});
+          const cell = (tr[g.round] ??= { sum: 0, n: 0 });
+          cell.sum += g.pir; cell.n++;
+          const lc = (leagueRounds[g.round] ??= { sum: 0, n: 0 });
+          lc.sum += g.pir; lc.n++;
+          totalSum += g.pir; totalN++;
+        }
+      }
+
+      const overall = totalN ? totalSum / totalN : 0;
+
+      function agg(rounds, before) {
+        let sum = 0, n = 0;
+        for (const r in rounds) {
+          if (Number(r) < before) { sum += rounds[r].sum; n += rounds[r].n; }
+        }
+        return { sum, n };
+      }
+
+      // pozitivno = protivnik dozvoljava više PIR-a od prosjeka lige
+      return function oppFactor(team, beforeRound) {
+        if (!team || !teamRounds[team]) return 0;
+        const t = agg(teamRounds[team], beforeRound);
+        if (t.n === 0) return 0;
+        const l = agg(leagueRounds, beforeRound);
+        const league = l.n ? l.sum / l.n : overall;
+        return (t.sum + SHRINK_K * league) / (t.n + SHRINK_K) - league;
+      };
+    }
+
+    // ---------- Značajke ----------
+    // Interakcije s minutama: igrači sa stabilnom velikom ulogom (starteri) regresiraju
+    // ka sredini znatno manje od rezervista, pa im model smije dati drugačiju težinu.
+    function featurize(last3, season, min, home, opp) {
+      const m = min / 30;
+      return [last3, season, min, home, opp, last3 * m, season * m];
+    }
+
+    const FEATURE_NAMES = ["Last3", "AvgPIR", "AvgMin", "Home", "Opp", "Last3×Min", "AvgPIR×Min"];
+
+    // ---------- Trening ----------
+    function buildTrainingSet(players, oppFactor) {
+      const X = [];
+      const y = [];
+      const isLast = []; // za backtest: zadnja utakmica svakog igrača
+
+      // Uzorci s vrlo malo historije su šumoviti (u t=3 je Last3 identičan prosjeku sezone)
+      // i "spljošte" koeficijente, pa su vrhunski igrači potcijenjeni. Zato ih preskačemo
+      // čim ima dovoljno utakmica.
+      const maxGames = Math.max(0, ...players.map(p => (p.games || []).length));
+      const minHistory = Math.max(3, Math.min(6, Math.floor(maxGames / 2)));
+
+      for (const p of players) {
+        const g = p.games;
+        if (!g || g.length <= minHistory) continue;
+
+        for (let t = minHistory; t < g.length; t++) {
+          const prev = g.slice(0, t);
+          const last3 = g.slice(t - 3, t);
+
+          const last3Pir = last3.reduce((s, m) => s + m.pir, 0) / 3;
+          const seasonPir = prev.reduce((s, m) => s + m.pir, 0) / prev.length;
+          const seasonMin = prev.reduce((s, m) => s + m.min, 0) / prev.length;
+          const isHome = g[t].home ? 1 : 0;
+          const opp = oppFactor(g[t].opp, g[t].round ?? Infinity);
+
+          X.push(featurize(last3Pir, seasonPir, seasonMin, isHome, opp));
+          y.push(g[t].pir);
+          isLast.push(t === g.length - 1);
+        }
+      }
+      return { X, y, isLast };
+    }
+
+    // ---------- Backtest ----------
+    // Treniraj bez zadnje utakmice svakog igrača pa je pokušaj predvidjeti.
+    function runBacktest(ts) {
+      const trX = [], trY = [], te = [];
+      ts.X.forEach((x, i) => {
+        if (ts.isLast[i]) te.push(i);
+        else { trX.push(x); trY.push(ts.y[i]); }
+      });
+      if (te.length < 20 || trX.length < 50) return null;
+
+      const m = fitLinearRegression(trX, trY);
+      const stat = () => ({ n: 0, ae: 0, err: 0 });
+      const acc = { model: stat(), season: stat(), last3: stat(),
+                    starModel: stat(), starSeason: stat() };
+      const add = (s, pred, actual) => { s.n++; s.ae += Math.abs(pred - actual); s.err += pred - actual; };
+
+      const rows = [];
+      for (const i of te) {
+        const x = ts.X[i], actual = ts.y[i];
+        const pm = m.predict(x);
+        rows.push({ pm, ps: x[1], actual, star: x[2] >= 24 });
+        add(acc.model, pm, actual);
+        add(acc.season, x[1], actual);
+        add(acc.last3, x[0], actual);
+        if (x[2] >= 24) { add(acc.starModel, pm, actual); add(acc.starSeason, x[1], actual); }
+      }
+      const mae = s => s.ae / s.n, bias = s => s.err / s.n;
+      return {
+        rows,
+        n: acc.model.n, nStar: acc.starModel.n,
+        maeModel: mae(acc.model), maeSeason: mae(acc.season), maeLast3: mae(acc.last3),
+        starBiasModel: acc.starModel.n ? bias(acc.starModel) : null,
+        starBiasSeason: acc.starSeason.n ? bias(acc.starSeason) : null
+      };
+    }
+
+    let allRows = [];
+    let btData = null;
+    let blend = 0.3; // udio prosjeka sezone u konačnoj projekciji (0..1)
+    let sortKey = "proj";
+    let sortDir = -1;
+
+    async function init() {
+      const res = await fetch("./data.json");
+      const data = await res.json();
+
+      document.getElementById("roundBadge").textContent =
+        data.next_round ? `Round ${data.next_round} Projections` : "Season Projections";
+
+      const oppFactor = buildOppModel(data.players);
+      const ts = buildTrainingSet(data.players, oppFactor);
+      const model = fitLinearRegression(ts.X, ts.y);
+
+      const teams = [...new Set(data.players.map(p => p.team))].sort();
+      const teamSelect = document.getElementById("teamFilter");
+      teams.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        teamSelect.appendChild(opt);
+      });
+
+      allRows = data.players.map(p => {
+        const g = p.games;
+        const n = g.length;
+        const recent = g.slice(Math.max(0, n - 3));
+        const last3 = recent.reduce((s, m) => s + m.pir, 0) / recent.length;
+        const seasonPir = g.reduce((s, m) => s + m.pir, 0) / n;
+        const seasonMin = g.reduce((s, m) => s + m.min, 0) / n;
+
+        // sljedeći protivnik: koristi sve odigrane utakmice do sada
+        const oppF = oppFactor(p.next_opp_team, Infinity);
+
+        const rawPred = model.predict(featurize(last3, seasonPir, seasonMin, p.next_home ?? 0.5, oppF));
+        const base = n < 4 ? (0.5 * rawPred + 0.5 * seasonPir) : rawPred;
+
+        return {
+          name: p.name,
+          team: p.team,
+          last3: Number(last3.toFixed(1)),
+          season: Number(seasonPir.toFixed(1)),
+          oppF: Number(oppF.toFixed(2)),
+          base,
+          seasonRaw: seasonPir,
+          proj: base,
+          opp: p.next_opp || "",
+          gamesCount: n
+        };
+      });
+
+      const w = model.weights.map(v => v.toFixed(2));
+      const terms = FEATURE_NAMES.map((nm, i) => `(${w[i + 1]} × ${nm})`).join(" + ");
+
+      btData = runBacktest(ts);
+
+      document.getElementById("modelInfo").innerHTML = `
+        <span>Trening uzoraka: <strong>${ts.X.length}</strong> odigranih nastupa</span>
+        <span>Formula: PIR = ${w[0]} + ${terms}</span>
+        <span>Opp. Strength = prosječni PIR koji protivnik dozvoljava minus prosjek lige (samo prethodne utakmice, smireno ka prosjeku). Plus = lakši protivnik.</span>
+        <span>Konačna projekcija = model + slider × (prosjek sezone − model). Slider ne mijenja model, samo koliko ga približavamo sezonskom prosjeku.</span>
+        <span id="btLine"></span>
+      `;
+
+      applyBlend();
+    }
+
+    // ---------- Mješavina model + prosjek sezone ----------
+    // proj = model + α · (prosjek sezone − model).  α=0: čist model, α=1: samo prosjek sezone.
+    function applyBlend() {
+      allRows.forEach(r => {
+        r.proj = Number((r.base + blend * (r.seasonRaw - r.base)).toFixed(1));
+      });
+      document.getElementById("blendVal").textContent = Math.round(blend * 100) + "%";
+      updateBacktestLine();
+      renderTable();
+    }
+
+    function updateBacktestLine() {
+      const el = document.getElementById("btLine");
+      if (!el) return;
+      if (!btData) { el.textContent = "Backtest: premalo podataka."; return; }
+
+      const f1 = v => (v > 0 ? "+" : "") + v.toFixed(1);
+      const stats = a => {
+        let ae = 0, n = 0, sErr = 0, sN = 0;
+        for (const r of btData.rows) {
+          const p = r.pm + a * (r.ps - r.pm);
+          ae += Math.abs(p - r.actual); n++;
+          if (r.star) { sErr += p - r.actual; sN++; }
+        }
+        return { mae: ae / n, starBias: sN ? sErr / sN : null, sN };
+      };
+
+      const cur = stats(blend);
+      const grid = [0, 0.25, 0.5, 0.75, 1]
+        .map(a => `${Math.round(a * 100)}%: ${stats(a).mae.toFixed(2)}`).join(" | ");
+
+      el.innerHTML =
+        `Backtest (zadnja utakmica svakog igrača, n=${btData.n}). Trenutna mješavina <strong>${Math.round(blend * 100)}%</strong>: ` +
+        `MAE <strong>${cur.mae.toFixed(2)}</strong>` +
+        (cur.starBias !== null ? `, pristrasnost za igrače 24+ min (n=${cur.sN}) <strong>${f1(cur.starBias)}</strong> (minus = podcjenjivanje)` : "") +
+        `. MAE po udjelu prosjeka sezone: ${grid}. Last3 sam: ${btData.maeLast3.toFixed(2)}.`;
+    }
+
+    function oppCell(v) {
+      const cls = v > 0.05 ? "pos" : v < -0.05 ? "neg" : "zero";
+      const txt = (v > 0 ? "+" : "") + v.toFixed(1);
+      return `<span class="${cls}">${txt}</span>`;
+    }
+
+    function renderTable() {
+      const query = document.getElementById("searchInput").value.trim().toLowerCase();
+      const team = document.getElementById("teamFilter").value;
+      const minGames = Number(document.getElementById("minGamesFilter").value);
+
+      const filtered = allRows
+        .filter(r => r.gamesCount >= minGames)
+        .filter(r => team === "ALL" || r.team === team)
+        .filter(r => r.name.toLowerCase().includes(query))
+        .sort((a, b) => {
+          const va = a[sortKey];
+          const vb = b[sortKey];
+          if (typeof va === "string") return va.localeCompare(vb) * sortDir;
+          return (va - vb) * sortDir;
+        });
+
+      const tbody = document.getElementById("tableBody");
+      tbody.innerHTML = filtered.map(r => `
+        <tr>
+          <td><strong>${r.name}</strong><span class="opp-hint">${r.opp}</span></td>
+          <td><span class="team-tag">${r.team}</span></td>
+          <td class="num">${r.season.toFixed(1)}</td>
+          <td class="num">${r.last3.toFixed(1)}</td>
+          <td class="num">${oppCell(r.oppF)}</td>
+          <td class="num proj">${r.proj.toFixed(1)}</td>
+        </tr>
+      `).join("");
+    }
+
+    document.querySelectorAll("th[data-key]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.key;
+        if (sortKey === key) sortDir *= -1;
+        else {
+          sortKey = key;
+          sortDir = (key === "name" || key === "team") ? 1 : -1;
+        }
+        document.querySelectorAll("th[data-key]").forEach(h => {
+          h.textContent = h.textContent.replace(/ [▲▼]$/, "");
+        });
+        th.textContent += sortDir === -1 ? " ▼" : " ▲";
+        renderTable();
+      });
+    });
+
+    document.getElementById("blendSlider").addEventListener("input", e => {
+      blend = Number(e.target.value) / 100;
+      applyBlend();
+    });
+    document.getElementById("searchInput").addEventListener("input", renderTable);
+    document.getElementById("teamFilter").addEventListener("change", renderTable);
+    document.getElementById("minGamesFilter").addEventListener("change", renderTable);
+
+    init();
+  </script>
+</body>
+</html>
